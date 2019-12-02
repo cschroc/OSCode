@@ -24,7 +24,7 @@ SelectorData32		equ	LABEL_DESC_DATA32-LABEL_GDT
 
 	
 [SECTION .s16]
-[BITS		 16]
+[BITS	16]
 Label_Start:
 				
 	mov	ax,	cs
@@ -415,19 +415,25 @@ Label_Set_SVGA_Mode_Fail:
 	jmp	$
 
 Label_Set_SVGA_Mode_OK:
-	mov	ax,	1301h
-	mov	bx,	000Fh
-	mov	dx,	0F00h	;row 15
-	mov	cx,	30
-	push	ax
-	mov	ax,	ds
-	mov	es,	ax
-	pop	ax
-	mov	bp,	SetSVGAModeInfoOKMessage
-	int	10h
+;;; ====	init	IDT GDT goto protect mode
+	cli			;close interrupt
+	db	0x66
+	lgdt	[GdtPtr]
 
+	;; if confirm will not generate interrupt, no need lidt
+;;; 	db	0x66
+;;; 	lidt	[IDT_POINTER]
+
+	mov	eax,	cr0	;protect mode
+	or	eax,	1
+	mov	cr0,	eax
+
+	jmp	dword	SelectorCode32:GO_TO_TMP_Protect 
+
+[SECTION .s32]
+[BITS 32]
+GO_TO_TMP_Protect:
 	jmp	$
-
 	
 ;******************************************************
 ;********* Sub  Functions Begin ***********************
@@ -435,6 +441,9 @@ Label_Set_SVGA_Mode_OK:
 ;Function:   Read one or few sectors from floppy a to es:bx
 ;Parameters: AX=LBA,CL=count,ES:BX=Addr of destination
 ;Return: -
+	
+[SECTION .s16lib]
+[BITS 16]
 ReadInSectors:
         push    bp
         mov     bp,     sp
@@ -566,6 +575,15 @@ support_long_mode_done:
 ;******************************************************
 ;********* Sub  Functions End   ***********************
 ;******************************************************
+;;; ====	TMP IDT
+IDT:
+	times	0x50	dq	0
+IDT_END:
+
+IDT_POINTER:
+	dw 	IDT_END - IDT - 1
+	dd	IDT 
+
 ;;; ====	TMP Variables
 OffsetOfKernelFileCount	dd	OffsetOfKernelFile
 Odd			db	0
