@@ -22,6 +22,18 @@ GdtPtr			dw	GdtLen - 1
 SelectorCode32		equ	LABEL_DESC_CODE32-LABEL_GDT
 SelectorData32		equ	LABEL_DESC_DATA32-LABEL_GDT
 
+[SECTION gdt64]
+
+LABEL_GDT64:		dq	0x0000000000000000
+LABEL_DESC_CODE64:	dq	0x0020980000000000
+LABEL_DESC_DATA64:	dq	0x0000920000000000
+
+GdtLen64	equ	$ - LABEL_GDT64
+GdtPtr64	dw	GdtLen64 - 1
+		dd	LABEL_GDT64
+
+SelectorCode64	equ	LABEL_DESC_CODE64 - LABEL_GDT64
+SelectorData64	equ	LABEL_DESC_DATA64 - LABEL_GDT64
 	
 [SECTION .s16]
 [BITS	16]
@@ -433,7 +445,97 @@ Label_Set_SVGA_Mode_OK:
 [SECTION .s32]
 [BITS 32]
 GO_TO_TMP_Protect:
+;;; ====	update Segment-Rs
+	mov	ax,	0x10		;0x10-->is like as SelectorData32
+	mov	ds,	ax		;except cs(must be assigned by jmp selector:offset)
+	mov	es,	ax
+	mov	fs,	ax
+	mov	ss,	ax
+	mov	esp,	7E00h		;7c00--7e00 be used as stack
+
+	;; 	check whether IA_32e(X64-Arichietecture) is supported 
+	call	support_long_mode
+	test	eax,	eax
+	jz	no_support	;if(eax == 0) no_support
+;;; ====	if(support IA_32e) init temporary page table 0x90000
+	mov 	dword [0x90000],	0x91007
+	mov 	dword [0x90800],	0x91007
+
+	mov	dword [0x91000],	0x92007
+
+	mov 	dword [0x92000],	0x000083
+
+	mov	dword [0x92008],	0x200083
+	
+	mov 	dword [0x92010],	0x400083
+
+	mov	dword [0x92018],	0x600083
+
+	mov	dword [0x92020],	0x800083
+
+	mov	dword [0x92028],	0xa00083
+	
+;;; ====	load GDTR
+	db	0x66
+	lgdt	[GdtPtr64]
+;;; ==== 	reload sreg-selector 
+	mov 	ax,	0x10
+	mov	ds,	ax
+	mov	es,	ax
+	mov 	fs,	ax
+	mov 	gs,	ax
+	mov 	ss,	ax
+
+	mov 	esp,	7E00h
+
+;;; ====	open PAE(CR4-Physical Address Extension)
+	mov 	eax,	cr4
+	bts	eax,	5		
+	mov 	cr4,	eax		;cf=5th of eax; 5th(PAE) of eax = 1
+
+;;; ====	load cr3--->Page-Directory Base 
+	mov 	eax,	0x90000
+	mov 	cr3,	eax
+;;; ====	enable long-mode(IA32_EFER) by using rdmsr & wdmsr
+	mov 	ecx,	0C0000080h 	;IA32_EFER
+	rdmsr				;rdmsr.ECX(address):EDX:EAX
+
+	bts	eax,	8		;set 0C0000080h 8th(LME) bit = 1
+	wrmsr
+
+;;; ====	open	PG(Paging)  &&  PE(Protection Enable) 
+	mov 	eax,	cr0
+	bts	eax,	0
+	bts	eax,	31
+	mov 	cr0,	eax
+
+	jmp	SelectorCode64:OffsetOfKernelFile
+
+;;; Function:check machine about supporting long mode or not
+;;; 1.(EFLAG-ID)check-support cpuid-->2.(CPUID_0x80000000)check-support ext_func > 80000000-->3.(CPUID_0x8000001)check-get edx.[29](x64 architecture) from return
+;;; parameters:null
+;;; return: eax
+support_long_mode:
+	mov	eax,	0x80000000
+	cpuid
+	cmp	eax,	0x80000001
+	setnb	al			;if( !< or >= ) al=1
+	jb	support_long_mode_done 	;if( < ) jmp
+	mov	eax,	0x80000001
+	cpuid
+	bt 	edx,	29		;the 29th bit of edx-->cf
+	setc	al			;if(cf==1) al=1
+	
+
+support_long_mode_done:	
+	movzx	eax,	al	;al-->eax
+	ret
+
+no_support:
 	jmp	$
+
+
+
 	
 ;******************************************************
 ;********* Sub  Functions Begin ***********************
@@ -552,24 +654,6 @@ Label_Display_InHex:
 	pop	edx
 	pop	ecx
 	
-	ret
-;;; Function:check machine about supporting long mode or not
-;;; parameters:null
-;;; return: eax
-support_long_mode:
-	mov	eax,	0x80000000
-	cpuid
-	cmp	eax,	0x80000001
-	setnb	al			;if( !< or >= ) al=1
-	jb	support_long_mode_done 	;if( < ) jmp
-	mov	eax,	0x80000001
-	cpuid
-	bt 	edx,	29		;the 29th bit of edx-->cf
-	setc	al			;if(cf==1) al=1
-	
-
-support_long_mode_done:	
-	movzx	eax,	al	;al-->eax
 	ret
 	
 ;******************************************************
